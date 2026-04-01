@@ -2,12 +2,12 @@ package com.timelapse.app.ui
 
 import android.content.ContentUris
 import android.content.Context
-import android.content.Intent
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import android.util.Log
 import android.util.Size
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -46,14 +47,16 @@ data class VideoItem(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun VideoGalleryScreen(onBack: () -> Unit) {
+fun VideoGalleryScreen(
+    onBack: () -> Unit,
+    onPlayVideo: (Uri) -> Unit
+) {
     val context = LocalContext.current
 
     var videos       by remember { mutableStateOf<List<VideoItem>>(emptyList()) }
     var isLoading    by remember { mutableStateOf(true) }
     var deleteTarget by remember { mutableStateOf<VideoItem?>(null) }
 
-    // Load videos from MediaStore
     LaunchedEffect(Unit) {
         videos    = loadTimelapsVideos(context)
         isLoading = false
@@ -65,7 +68,7 @@ fun VideoGalleryScreen(onBack: () -> Unit) {
                 title = { Text("My Timelapses") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -96,7 +99,7 @@ fun VideoGalleryScreen(onBack: () -> Unit) {
                         items(videos, key = { it.id }) { video ->
                             VideoCard(
                                 video     = video,
-                                onPlay    = { playVideo(context, video.uri) },
+                                onPlay    = { onPlayVideo(video.uri) },
                                 onDelete  = { deleteTarget = video }
                             )
                         }
@@ -106,7 +109,6 @@ fun VideoGalleryScreen(onBack: () -> Unit) {
         }
     }
 
-    // Delete confirmation dialog
     deleteTarget?.let { video ->
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
@@ -116,8 +118,12 @@ fun VideoGalleryScreen(onBack: () -> Unit) {
             confirmButton = {
                 TextButton(
                     onClick = {
-                        context.contentResolver.delete(video.uri, null, null)
-                        videos      = videos.filter { it.id != video.id }
+                        try {
+                            context.contentResolver.delete(video.uri, null, null)
+                            videos      = videos.filter { it.id != video.id }
+                        } catch (e: Exception) {
+                            Log.e("Gallery", "Delete failed", e)
+                        }
                         deleteTarget = null
                     }
                 ) { Text("Delete", color = MaterialTheme.colorScheme.error) }
@@ -128,10 +134,6 @@ fun VideoGalleryScreen(onBack: () -> Unit) {
         )
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Video card
-// ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
 private fun VideoCard(
@@ -158,7 +160,6 @@ private fun VideoCard(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment   = Alignment.CenterVertically
         ) {
-            // Thumbnail
             Box(
                 modifier          = Modifier
                     .size(width = 112.dp, height = 70.dp)
@@ -177,14 +178,12 @@ private fun VideoCard(
                 } else {
                     Icon(Icons.Default.VideoFile, null, tint = Color.Gray, modifier = Modifier.size(32.dp))
                 }
-                // Play overlay icon
                 Icon(
                     Icons.Default.PlayCircle,
                     contentDescription = "Play",
                     tint     = Color.White.copy(alpha = 0.85f),
                     modifier = Modifier.size(32.dp)
                 )
-                // Duration badge
                 if (video.durationMs > 0) {
                     Text(
                         text     = formatDuration(video.durationMs),
@@ -199,7 +198,6 @@ private fun VideoCard(
                 }
             }
 
-            // Info
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text     = video.displayName,
@@ -220,7 +218,6 @@ private fun VideoCard(
                 )
             }
 
-            // Delete button
             IconButton(onClick = onDelete) {
                 Icon(
                     Icons.Default.DeleteOutline,
@@ -245,14 +242,9 @@ private fun EmptyGallery(modifier: Modifier = Modifier) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Data loading helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
 private suspend fun loadTimelapsVideos(context: Context): List<VideoItem> =
     withContext(Dispatchers.IO) {
         val results = mutableListOf<VideoItem>()
-
         val projection = arrayOf(
             MediaStore.Video.Media._ID,
             MediaStore.Video.Media.DISPLAY_NAME,
@@ -261,40 +253,43 @@ private suspend fun loadTimelapsVideos(context: Context): List<VideoItem> =
             MediaStore.Video.Media.SIZE
         )
 
-        // Selection: videos inside our app's folder
         val selection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
             "${MediaStore.Video.Media.RELATIVE_PATH} LIKE ?"
         else
             null
         val selectionArgs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
-            arrayOf("Movies/TimelapsApp/%")
+            arrayOf("Movies/TimelapsApp%")
         else
             null
 
         val sortOrder = "${MediaStore.Video.Media.DATE_ADDED} DESC"
 
-        context.contentResolver.query(
-            MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-            projection, selection, selectionArgs, sortOrder
-        )?.use { cursor ->
-            val idCol       = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
-            val nameCol     = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
-            val dateCol     = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_ADDED)
-            val durCol      = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION)
-            val sizeCol     = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.SIZE)
+        try {
+            context.contentResolver.query(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                projection, selection, selectionArgs, sortOrder
+            )?.use { cursor ->
+                val idCol       = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
+                val nameCol     = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
+                val dateCol     = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_ADDED)
+                val durCol      = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION)
+                val sizeCol     = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.SIZE)
 
-            while (cursor.moveToNext()) {
-                val id  = cursor.getLong(idCol)
-                val uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
-                results += VideoItem(
-                    id          = id,
-                    uri         = uri,
-                    displayName = cursor.getString(nameCol) ?: "video_$id.mp4",
-                    dateAddedMs = cursor.getLong(dateCol) * 1000L,
-                    durationMs  = cursor.getLong(durCol),
-                    sizeBytes   = cursor.getLong(sizeCol)
-                )
+                while (cursor.moveToNext()) {
+                    val id  = cursor.getLong(idCol)
+                    val uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
+                    results += VideoItem(
+                        id          = id,
+                        uri         = uri,
+                        displayName = cursor.getString(nameCol) ?: "video_$id.mp4",
+                        dateAddedMs = cursor.getLong(dateCol) * 1000L,
+                        durationMs  = cursor.getLong(durCol),
+                        sizeBytes   = cursor.getLong(sizeCol)
+                    )
+                }
             }
+        } catch (e: Exception) {
+            Log.e("Gallery", "Load failed", e)
         }
         results
     }
@@ -314,28 +309,13 @@ private suspend fun loadThumbnail(context: Context, video: VideoItem): Bitmap? =
         }.getOrNull()
     }
 
-private fun playVideo(context: Context, uri: Uri) {
-    val intent = Intent(Intent.ACTION_VIEW).apply {
-        setDataAndType(uri, "video/mp4")
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    }
-    context.startActivity(Intent.createChooser(intent, "Open with"))
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Formatting helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
 private val dateFormatter = SimpleDateFormat("MMM d, yyyy  h:mm a", Locale.getDefault())
-
 private fun formatDate(ms: Long)  = dateFormatter.format(Date(ms))
-
 private fun formatDuration(ms: Long): String {
     val m = TimeUnit.MILLISECONDS.toMinutes(ms)
     val s = TimeUnit.MILLISECONDS.toSeconds(ms) % 60
     return String.format("%d:%02d", m, s)
 }
-
 private fun formatSize(bytes: Long): String = when {
     bytes >= 1_000_000 -> "%.1f MB".format(bytes / 1_000_000f)
     bytes >= 1_000     -> "%.0f KB".format(bytes / 1_000f)

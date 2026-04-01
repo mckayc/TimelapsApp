@@ -4,33 +4,30 @@ import android.app.Application
 import android.content.ContentValues
 import android.graphics.Bitmap
 import android.graphics.Matrix
+import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
-import androidx.camera.core.ImageCapture
-import androidx.camera.core.ImageCaptureException
-import androidx.camera.core.ImageProxy
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.core.content.ContextCompat
+import androidx.camera.core.*
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.timelapse.app.data.SettingsRepository
 import com.timelapse.app.encoder.VideoEncoder
-import com.timelapse.app.model.CameraOption
-import com.timelapse.app.model.TimelapseSettings
+import com.timelapse.app.model.*
 import com.timelapse.app.overlay.OverlayRenderer
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
-import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
+import androidx.core.content.ContextCompat
+import androidx.compose.runtime.*
 
 // Top-level screens in the app
-enum class AppScreen { CAMERA, GALLERY }
+enum class AppScreen { CAMERA, GALLERY, PLAYER }
 
 data class CaptureUiState(
     val isCapturing: Boolean = false,
@@ -39,12 +36,15 @@ data class CaptureUiState(
     val elapsedSeconds: Long = 0L,
     val outputPath: String? = null,
     val errorMessage: String? = null,
-    val showSettings: Boolean = false
+    val showSettings: Boolean = false,
+    val batterySaverActive: Boolean = false,
+    val selectedVideoUri: Uri? = null
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val TAG = "MainViewModel"
+    private val repository = SettingsRepository(application)
 
     // ---- UI-observable state ----
     var settings by mutableStateOf(TimelapseSettings())
@@ -63,13 +63,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ---- Internal capture state ----
     private var captureJob: Job? = null
     private var timerJob: Job? = null
+    private var batterySaverJob: Job? = null
 
     private var encoder: VideoEncoder? = null
     private val encoderMutex = Mutex()
 
     private var currentImageCapture: ImageCapture? = null
+    private var cameraControl: CameraControl? = null
 
     private val overlayRenderer = OverlayRenderer()
+
+    init {
+        // Load persisted settings
+        viewModelScope.launch {
+            repository.settingsFlow.collectLatest { persistedSettings ->
+                settings = persistedSettings
+                applyCameraSettings()
+            }
+        }
+    }
 
     // ---- Public API ----
 
@@ -77,8 +89,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         currentImageCapture = imageCapture
     }
 
+    fun setCameraControl(control: CameraControl?) {
+        cameraControl = control
+        applyCameraSettings()
+    }
+
+    private fun applyCameraSettings() {
+        val control = cameraControl ?: return
+        if (settings.focusExposureLocked) {
+            control.cancelFocusAndMetering()
+        }
+    }
+
+    fun toggleFocusLock() {
+        updateSettings(settings.copy(focusExposureLocked = !settings.focusExposureLocked))
+    }
+
     fun updateSettings(newSettings: TimelapseSettings) {
         settings = newSettings
+        viewModelScope.launch {
+            repository.updateSettings(newSettings)
+        }
     }
 
     fun toggleSettings() {
@@ -87,6 +118,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun navigateTo(screen: AppScreen) {
         currentScreen = screen
+    }
+
+    fun playVideo(uri: Uri) {
+        uiState = uiState.copy(selectedVideoUri = uri)
+        currentScreen = AppScreen.PLAYER
     }
 
     fun onCameraBindingFailed(message: String) {
@@ -108,57 +144,85 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         captureStartMs = System.currentTimeMillis()
-        uiState = CaptureUiState(isCapturing = true, showSettings = false)
+        uiState = uiState.copy(
+            isCapturing = true,
+            showSettings = false,
+            frameCount = 0,
+            elapsedSeconds = 0,
+            batterySaverActive = false
+        )
 
         startElapsedTimer()
+        if (settings.batterySaver) {
+            startBatterySaverTimer()
+        }
 
         val ctx = getApplication<Application>()
         val executor = ContextCompat.getMainExecutor(ctx)
         val intervalMs = settings.intervalSeconds * 1000L
-        val snap = settings.copy() // snapshot so mid-capture settings changes don't affect this run
+        val snap = settings.copy() // snapshot
 
         captureJob = viewModelScope.launch(Dispatchers.IO) {
             while (isActive) {
                 val frameStart = System.currentTimeMillis()
 
                 try {
-                    val bitmap = captureFrame(capture, executor) ?: continue
-
-                    // Apply overlay
-                    val overlaid = overlayRenderer.applyOverlay(bitmap, snap, captureStartMs)
-                    if (overlaid !== bitmap) bitmap.recycle()
+                    val (bitmap, _) = captureFrame(capture, executor) ?: continue
 
                     // Init encoder on first frame
                     encoderMutex.withLock {
                         if (encoder == null) {
                             val tmp = File(ctx.cacheDir, "timelapse_tmp_${System.currentTimeMillis()}.mp4")
+                            
+                            val isPortrait = bitmap.height > bitmap.width
+                            val targetWidth = if (isPortrait) snap.videoResolution.height else snap.videoResolution.width
+                            val targetHeight = if (isPortrait) snap.videoResolution.width else snap.videoResolution.height
+
                             encoder = VideoEncoder(
                                 outputFile = tmp,
-                                width = overlaid.width,
-                                height = overlaid.height,
-                                fps = snap.outputFps
+                                encWidth = targetWidth,
+                                encHeight = targetHeight,
+                                settings = snap,
+                                captureStartMs = captureStartMs,
+                                rotation = 0
                             ).also { it.start() }
                         }
-                        encoder!!.addFrame(overlaid)
-                        overlaid.recycle()
+                        encoder!!.addFrame(bitmap)
+                        bitmap.recycle()
                     }
 
                     val newCount = uiState.frameCount + 1
                     withContext(Dispatchers.Main) {
                         uiState = uiState.copy(frameCount = newCount)
+                        checkAutoStop(newCount, System.currentTimeMillis() - captureStartMs)
                     }
 
                 } catch (e: CancellationException) {
-                    throw e // let coroutine cancel normally
+                    throw e
                 } catch (e: Exception) {
                     Log.e(TAG, "Frame capture/encode error", e)
                 }
 
-                // Wait for the remainder of the interval
                 val spent = System.currentTimeMillis() - frameStart
                 val remaining = intervalMs - spent
                 if (remaining > 0) delay(remaining)
             }
+        }
+    }
+
+    private fun checkAutoStop(frameCount: Int, elapsedMs: Long) {
+        when (settings.autoStopType) {
+            AutoStopType.FRAMES -> {
+                if (frameCount >= settings.autoStopValue && settings.autoStopValue > 0) {
+                    stopCapture()
+                }
+            }
+            AutoStopType.DURATION -> {
+                if (elapsedMs >= settings.autoStopValue * 60 * 1000L && settings.autoStopValue > 0) {
+                    stopCapture()
+                }
+            }
+            AutoStopType.NONE -> {}
         }
     }
 
@@ -167,8 +231,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         captureJob = null
         timerJob?.cancel()
         timerJob = null
+        batterySaverJob?.cancel()
+        batterySaverJob = null
 
-        uiState = uiState.copy(isCapturing = false, isEncoding = true)
+        uiState = uiState.copy(isCapturing = false, isEncoding = true, batterySaverActive = false)
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -203,16 +269,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun startBatterySaverTimer() {
+        batterySaverJob?.cancel()
+        batterySaverJob = viewModelScope.launch {
+            delay(settings.batterySaverTimeoutSeconds * 1000L)
+            if (uiState.isCapturing) {
+                uiState = uiState.copy(batterySaverActive = true)
+            }
+        }
+    }
+
+    fun wakeUp() {
+        if (uiState.batterySaverActive) {
+            uiState = uiState.copy(batterySaverActive = false)
+            if (uiState.isCapturing && settings.batterySaver) {
+                startBatterySaverTimer()
+            }
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
         captureJob?.cancel()
         timerJob?.cancel()
+        batterySaverJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
             encoderMutex.withLock { encoder?.finish(); encoder = null }
         }
     }
-
-    // ---- Private helpers ----
 
     private fun startElapsedTimer() {
         timerJob?.cancel()
@@ -225,28 +309,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Suspend until CameraX delivers one captured frame as a correctly-rotated Bitmap.
-     */
     private suspend fun captureFrame(
         imageCapture: ImageCapture,
         executor: java.util.concurrent.Executor
-    ): Bitmap? = suspendCoroutine { cont ->
+    ): Pair<Bitmap, Int>? = suspendCoroutine { cont ->
         imageCapture.takePicture(
             executor,
             object : ImageCapture.OnImageCapturedCallback() {
                 override fun onCaptureSuccess(imageProxy: ImageProxy) {
                     val bitmap = imageProxy.toBitmap()
-                    val rotation = imageProxy.imageInfo.rotationDegrees
                     imageProxy.close()
 
-                    val rotated = if (rotation != 0) {
+                    val processed = if (settings.cameraOption == CameraOption.FRONT) {
                         val matrix = Matrix().apply {
-                            postRotate(rotation.toFloat())
-                            // Mirror horizontally for front camera selfie view
-                            if (settings.cameraOption == CameraOption.FRONT) {
-                                postScale(-1f, 1f, bitmap.width / 2f, bitmap.height / 2f)
-                            }
+                            postScale(-1f, 1f, bitmap.width / 2f, bitmap.height / 2f)
                         }
                         Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
                             .also { bitmap.recycle() }
@@ -254,7 +330,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         bitmap
                     }
 
-                    cont.resume(rotated)
+                    cont.resume(processed to 0)
                 }
 
                 override fun onError(exception: ImageCaptureException) {
@@ -265,43 +341,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    private fun saveToGallery(tempFile: File): String {
-        val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-        val fileName = "TIMELAPSE_$ts.mp4"
+    private fun saveToGallery(file: File): String? {
         val ctx = getApplication<Application>()
-
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // API 29+: use MediaStore (no WRITE permission needed)
-            val values = ContentValues().apply {
-                put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
-                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/TimelapsApp")
+        val filename = "Timelapse_${System.currentTimeMillis()}.mp4"
+        val values = ContentValues().apply {
+            put(MediaStore.Video.Media.DISPLAY_NAME, filename)
+            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/TimelapsApp/")
                 put(MediaStore.Video.Media.IS_PENDING, 1)
             }
-            val uri = ctx.contentResolver.insert(
-                MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values
-            ) ?: throw java.io.IOException("MediaStore insert returned null — storage full or permission denied")
-            (ctx.contentResolver.openOutputStream(uri)
-                ?: throw java.io.IOException("Could not open output stream for $uri")).use { out ->
-                tempFile.inputStream().use { it.copyTo(out) }
-            }
-            values.clear()
-            values.put(MediaStore.Video.Media.IS_PENDING, 0)
-            ctx.contentResolver.update(uri, values, null, null)
-            // Keep tempFile for immediate "Watch Now" playback via Uri.fromFile.
-            // Cache dir is managed by Android and cleaned up when storage is low.
-            tempFile.absolutePath
+        }
+
+        val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
         } else {
-            // API 26-28: write directly to public Movies folder
-            @Suppress("DEPRECATION")
-            val moviesDir = android.os.Environment.getExternalStoragePublicDirectory(
-                android.os.Environment.DIRECTORY_MOVIES
-            )
-            val appDir = File(moviesDir, "TimelapsApp").also { it.mkdirs() }
-            val dest = File(appDir, fileName)
-            tempFile.copyTo(dest, overwrite = true)
-            tempFile.delete()
-            dest.absolutePath
+            MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+        }
+
+        val uri = ctx.contentResolver.insert(collection, values) ?: return null
+
+        try {
+            ctx.contentResolver.openOutputStream(uri)?.use { out ->
+                file.inputStream().use { it.copyTo(out) }
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                values.clear()
+                values.put(MediaStore.Video.Media.IS_PENDING, 0)
+                ctx.contentResolver.update(uri, values, null, null)
+            }
+
+            file.delete()
+            return uri.toString()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save to gallery", e)
+            return null
         }
     }
 }

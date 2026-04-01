@@ -9,34 +9,37 @@ import java.util.*
 import java.util.concurrent.TimeUnit
 
 /**
- * Renders text overlays (timestamp / stopwatch / static text) onto a Bitmap.
- * Returns the same bitmap if overlay type is NONE, otherwise a new mutable copy.
+ * Renders text overlays (timestamp / stopwatch / static text) onto a Canvas.
  */
 class OverlayRenderer {
 
-    fun applyOverlay(
-        source: Bitmap,
+    /**
+     * Draws the overlay directly onto the provided Canvas.
+     */
+    fun drawOverlay(
+        canvas: Canvas,
+        width: Int,
+        height: Int,
         settings: TimelapseSettings,
         captureStartMs: Long
-    ): Bitmap {
-        if (settings.overlayType == OverlayType.NONE) return source
+    ) {
+        if (settings.overlayType == OverlayType.NONE) return
 
         val text = when (settings.overlayType) {
             OverlayType.TIMESTAMP -> SimpleDateFormat("yyyy-MM-dd  HH:mm:ss", Locale.getDefault()).format(Date())
-            OverlayType.STOPWATCH -> formatElapsed(System.currentTimeMillis() - captureStartMs)
+            OverlayType.STOPWATCH -> {
+                if (captureStartMs == 0L) "00:00"
+                else formatElapsed(System.currentTimeMillis() - captureStartMs)
+            }
             OverlayType.STATIC_TEXT -> settings.overlayText.ifBlank { "Timelapse" }
-            OverlayType.NONE -> return source
+            OverlayType.NONE -> return
         }
 
-        // Work on a mutable copy so we don't mutate the decoded JPEG bitmap
-        val output = source.copy(Bitmap.Config.ARGB_8888, true)
-        val canvas = Canvas(output)
-
-        // Scale text size relative to image width so it looks good at any resolution
-        val scaleFactor = output.width / 400f
+        // Scale text size relative to the SMALLER dimension to ensure it's never too big
+        val minDim = minOf(width, height)
+        val scaleFactor = minDim / 400f
         val textSizePx = settings.overlayTextSizeSp * scaleFactor
 
-        // --- Text paint (white) ---
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
             this.textSize = textSizePx
@@ -44,22 +47,22 @@ class OverlayRenderer {
             style = Paint.Style.FILL
         }
 
-        // --- Shadow / stroke paint for readability on any background ---
         val shadowPaint = Paint(textPaint).apply {
             color = Color.BLACK
             style = Paint.Style.STROKE
-            strokeWidth = textSizePx * 0.08f
+            strokeWidth = textSizePx * 0.12f // Thicker shadow for better visibility
         }
 
-        val padding = textSizePx * 0.6f
+        // Increase padding to ensure text isn't cut off by rounded corners or system UI
+        val padding = textSizePx * 0.8f
         val textWidth = textPaint.measureText(text)
         val metrics = textPaint.fontMetrics
         val textHeight = metrics.descent - metrics.ascent
 
         val (x, y) = computePosition(
             settings.overlayPosition,
-            output.width.toFloat(),
-            output.height.toFloat(),
+            width.toFloat(),
+            height.toFloat(),
             textWidth,
             textHeight,
             padding,
@@ -68,7 +71,20 @@ class OverlayRenderer {
 
         canvas.drawText(text, x, y, shadowPaint)
         canvas.drawText(text, x, y, textPaint)
+    }
 
+    /**
+     * Legacy method for cases where we still need a bitmap (e.g. preview).
+     */
+    fun applyOverlay(
+        source: Bitmap,
+        settings: TimelapseSettings,
+        captureStartMs: Long
+    ): Bitmap {
+        if (settings.overlayType == OverlayType.NONE) return source
+        val output = source.copy(Bitmap.Config.ARGB_8888, true)
+        val canvas = Canvas(output)
+        drawOverlay(canvas, output.width, output.height, settings, captureStartMs)
         return output
     }
 
@@ -81,7 +97,7 @@ class OverlayRenderer {
         padding: Float,
         metrics: Paint.FontMetrics
     ): Pair<Float, Float> {
-        val baseline = -metrics.ascent  // distance from ascent to baseline
+        val baseline = -metrics.ascent
         return when (position) {
             OverlayPosition.TOP_LEFT ->
                 Pair(padding, padding + baseline)

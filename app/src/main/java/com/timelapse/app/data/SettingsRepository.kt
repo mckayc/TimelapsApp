@@ -13,14 +13,20 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 class SettingsRepository(private val context: Context) {
 
     private object PreferencesKeys {
-        val CAMERA_OPTION = stringPreferenceKey("camera_option")
-        val INTERVAL_SECONDS = intPreferenceKey("interval_seconds")
-        val OVERLAY_TYPE = stringPreferenceKey("overlay_type")
-        val OVERLAY_TEXT = stringPreferenceKey("overlay_text")
-        val OVERLAY_TEXT_SIZE = floatPreferenceKey("overlay_text_size")
-        val OVERLAY_POSITION = stringPreferenceKey("overlay_position")
-        val OUTPUT_FPS = intPreferenceKey("output_fps")
-        val VIDEO_QUALITY = stringPreferenceKey("video_quality")
+        val CAMERA_OPTION = stringPreferencesKey("camera_option")
+        val INTERVAL_SECONDS = intPreferencesKey("interval_seconds")
+        val OVERLAY_TYPE = stringPreferencesKey("overlay_type")
+        val OVERLAY_TEXT = stringPreferencesKey("overlay_text")
+        val OVERLAY_TEXT_SIZE = floatPreferencesKey("overlay_text_size")
+        val OVERLAY_POSITION = stringPreferencesKey("overlay_position")
+        val OUTPUT_FPS = intPreferencesKey("output_fps")
+        val VIDEO_QUALITY = stringPreferencesKey("video_quality")
+        val VIDEO_RESOLUTION = stringPreferencesKey("video_resolution")
+        val FOCUS_EXPOSURE_LOCKED = booleanPreferencesKey("focus_exposure_locked")
+        val AUTO_STOP_TYPE = stringPreferencesKey("auto_stop_type")
+        val AUTO_STOP_VALUE = intPreferencesKey("auto_stop_value")
+        val SHOW_GRID = booleanPreferencesKey("show_grid")
+        val BATTERY_SAVER = booleanPreferencesKey("battery_saver")
     }
 
     val settingsFlow: Flow<TimelapseSettings> = context.dataStore.data
@@ -41,7 +47,17 @@ class SettingsRepository(private val context: Context) {
                 outputFps = preferences[PreferencesKeys.OUTPUT_FPS] ?: 30,
                 videoQuality = VideoQuality.valueOf(
                     preferences[PreferencesKeys.VIDEO_QUALITY] ?: VideoQuality.MEDIUM.name
-                )
+                ),
+                videoResolution = VideoResolution.valueOf(
+                    preferences[PreferencesKeys.VIDEO_RESOLUTION] ?: VideoResolution.P1080.name
+                ),
+                focusExposureLocked = preferences[PreferencesKeys.FOCUS_EXPOSURE_LOCKED] ?: false,
+                autoStopType = AutoStopType.valueOf(
+                    preferences[PreferencesKeys.AUTO_STOP_TYPE] ?: AutoStopType.NONE.name
+                ),
+                autoStopValue = preferences[PreferencesKeys.AUTO_STOP_VALUE] ?: 0,
+                showGrid = preferences[PreferencesKeys.SHOW_GRID] ?: false,
+                batterySaver = preferences[PreferencesKeys.BATTERY_SAVER] ?: false
             )
         }
 
@@ -55,6 +71,12 @@ class SettingsRepository(private val context: Context) {
             preferences[PreferencesKeys.OVERLAY_POSITION] = settings.overlayPosition.name
             preferences[PreferencesKeys.OUTPUT_FPS] = settings.outputFps
             preferences[PreferencesKeys.VIDEO_QUALITY] = settings.videoQuality.name
+            preferences[PreferencesKeys.VIDEO_RESOLUTION] = settings.videoResolution.name
+            preferences[PreferencesKeys.FOCUS_EXPOSURE_LOCKED] = settings.focusExposureLocked
+            preferences[PreferencesKeys.AUTO_STOP_TYPE] = settings.autoStopType.name
+            preferences[PreferencesKeys.AUTO_STOP_VALUE] = settings.autoStopValue
+            preferences[PreferencesKeys.SHOW_GRID] = settings.showGrid
+            preferences[PreferencesKeys.BATTERY_SAVER] = settings.batterySaver
         }
     }
 }
