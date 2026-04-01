@@ -1,0 +1,50 @@
+# Build folders
+.gradle/
+build/
+*/build/
+
+# Local configuration
+local.properties
+
+# IDE files
+.idea/
+*.iml
+.idea/modules.xml
+.idea/workspace.xml
+.idea/libraries/
+.idea/caches/
+.idea/assetWizardSettings.xml
+*.ipr
+*.iws
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# Android Studio captures and logs
+captures/
+*.log
+
+# Native build
+.externalNativeBuild/
+.cxx/
+
+# Proguard/R8 mapping files
+**/proguard/
+
+# Generated APKs/Bundles
+*.apk
+*.ap_
+*.aab
+
+# Google Services (if added later)
+google-services.json
+
+# Temporary files
+*.swp
+*~
+
+# Built-in Problem reports
+build/reports/

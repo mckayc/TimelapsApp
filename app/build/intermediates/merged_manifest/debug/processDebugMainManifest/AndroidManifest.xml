@@ -19,6 +19,11 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
+    <!-- Read videos from gallery (needed for gallery screen on API 33+) -->
+    <uses-permission
+        android:name="android.permission.READ_MEDIA_VIDEO"
+        android:minSdkVersion="33" />
+
     <!-- Keep CPU/screen active during long captures -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
