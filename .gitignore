@@ -8,6 +8,8 @@ local.properties
 
 # IDE files
 .idea/
+.gradle/
+build/
 *.iml
 .idea/modules.xml
 .idea/workspace.xml
@@ -16,6 +18,7 @@ local.properties
 .idea/assetWizardSettings.xml
 *.ipr
 *.iws
+.navigation/
 
 # macOS
 .DS_Store

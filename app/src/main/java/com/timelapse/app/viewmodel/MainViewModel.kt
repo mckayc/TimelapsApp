@@ -177,7 +177,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (tempFile != null && uiState.frameCount > 0) {
                     val saved = saveToGallery(tempFile)
                     withContext(Dispatchers.Main) {
-                        uiState = uiState.copy(isEncoding = false, outputPath = saved)
+                        // Return the absolute path so the internal player can find it
+                        uiState = uiState.copy(isEncoding = false, outputPath = tempFile.absolutePath)
                     }
                 } else {
                     withContext(Dispatchers.Main) {
@@ -292,10 +293,3 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 android.os.Environment.DIRECTORY_MOVIES
             )
             val appDir = File(moviesDir, "TimelapsApp").also { it.mkdirs() }
-            val dest = File(appDir, fileName)
-            tempFile.copyTo(dest)
-            tempFile.delete()
-            dest.absolutePath
-        }
-    }
-}
