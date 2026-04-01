@@ -1,0 +1,19 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.timelapse.app-mergeDebugResources-53:/values-h720dp-v13/values-h720dp-v13.xml",
+            "map": [
+                {
+                    "source": "C:\\Users\\mckay\\.gradle\\caches\\9.0-milestone-1\\transforms\\7130bc81ac485075df90e9b69cbe07cf\\transformed\\appcompat-1.1.0\\res\\values-h720dp-v13\\values-h720dp-v13.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "66",
+                        "endOffsets": "117"
+                    }
+                }
+            ]
+        }
+    ]
+}

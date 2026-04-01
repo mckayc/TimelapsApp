@@ -1,0 +1,4 @@
+#Tue Mar 31 18:02:47 MDT 2026
+base.0=D\:\\Backup Files\\Git\\Timelapse Stamp\\TimelapsApp\\app\\build\\intermediates\\dex\\debugAndroidTest\\mergeProjectDexDebugAndroidTest\\0\\classes.dex
+path.0=0/classes.dex
+renamed.0=classes.dex
