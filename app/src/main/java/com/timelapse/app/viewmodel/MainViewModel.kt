@@ -27,8 +27,10 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
+
+// Top-level screens in the app
+enum class AppScreen { CAMERA, GALLERY }
 
 data class CaptureUiState(
     val isCapturing: Boolean = false,
@@ -51,6 +53,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var uiState by mutableStateOf(CaptureUiState())
         private set
 
+    var currentScreen by mutableStateOf(AppScreen.CAMERA)
+        private set
+
+    /** Exposed so the live overlay composable can compute its running stopwatch. */
+    var captureStartMs: Long = 0L
+        private set
+
     // ---- Internal capture state ----
     private var captureJob: Job? = null
     private var timerJob: Job? = null
@@ -58,7 +67,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var encoder: VideoEncoder? = null
     private val encoderMutex = Mutex()
 
-    private var captureStartMs: Long = 0L
     private var currentImageCapture: ImageCapture? = null
 
     private val overlayRenderer = OverlayRenderer()
@@ -75,6 +83,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toggleSettings() {
         uiState = uiState.copy(showSettings = !uiState.showSettings)
+    }
+
+    fun navigateTo(screen: AppScreen) {
+        currentScreen = screen
     }
 
     fun dismissError() {
@@ -115,7 +127,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     // Init encoder on first frame
                     encoderMutex.withLock {
                         if (encoder == null) {
-                            val tmp = createTempFile(ctx.cacheDir)
+                            val tmp = File(ctx.cacheDir, "timelapse_tmp_${System.currentTimeMillis()}.mp4")
                             encoder = VideoEncoder(
                                 outputFile = tmp,
                                 width = overlaid.width,
@@ -247,11 +259,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         )
-    }
-
-    private fun createTempFile(cacheDir: File): File {
-        val name = "timelapse_tmp_${System.currentTimeMillis()}.mp4"
-        return File(cacheDir, name)
     }
 
     private fun saveToGallery(tempFile: File): String {

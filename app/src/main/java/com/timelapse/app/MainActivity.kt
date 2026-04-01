@@ -11,7 +11,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import com.timelapse.app.ui.CameraScreen
+import com.timelapse.app.ui.VideoGalleryScreen
 import com.timelapse.app.ui.theme.TimelapsAppTheme
+import com.timelapse.app.viewmodel.AppScreen
 import com.timelapse.app.viewmodel.MainViewModel
 
 class MainActivity : ComponentActivity() {
@@ -33,7 +35,13 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = Color.Black
                 ) {
-                    CameraScreen(viewModel = viewModel)
+                    // Simple screen router — no Navigation library needed
+                    when (viewModel.currentScreen) {
+                        AppScreen.CAMERA  -> CameraScreen(viewModel = viewModel)
+                        AppScreen.GALLERY -> VideoGalleryScreen(
+                            onBack = { viewModel.navigateTo(AppScreen.CAMERA) }
+                        )
+                    }
                 }
             }
         }
