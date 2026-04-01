@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.res.Configuration
 import android.view.Surface
 import android.view.WindowManager
+import androidx.camera.core.AspectRatio
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.Preview
@@ -121,7 +122,8 @@ private fun CameraContent(viewModel: MainViewModel) {
 
         val imageCapture = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
-            .setTargetRotation(displayRotation)   // ← KEY FIX for landscape
+            .setTargetRotation(displayRotation)
+            .setTargetAspectRatio(AspectRatio.RATIO_16_9)  // match screen preview aspect ratio
             .build()
 
         val preview = Preview.Builder()
@@ -138,7 +140,10 @@ private fun CameraContent(viewModel: MainViewModel) {
             provider.unbindAll()
             provider.bindToLifecycle(lifecycleOwner, selector, preview, imageCapture)
             viewModel.setImageCapture(imageCapture)
-        } catch (_: Exception) { }
+        } catch (e: Exception) {
+            android.util.Log.e("CameraScreen", "Camera binding failed", e)
+            viewModel.onCameraBindingFailed("Camera unavailable: ${e.message}")
+        }
     }
 
     // ── Screen dimming ────────────────────────────────────────────────────────
@@ -245,7 +250,7 @@ private fun CameraContent(viewModel: MainViewModel) {
             } else {
                 // Build Version Tag
                 Text(
-                    text = "v0.0.1",
+                    text = "v0.0.2",
                     color = Color.White.copy(alpha = 0.5f),
                     style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.padding(start = 8.dp)
@@ -354,6 +359,7 @@ private fun CameraContent(viewModel: MainViewModel) {
                 text  = { Text("${uiState.frameCount} frames saved to:\n$path", textAlign = TextAlign.Center) },
                 confirmButton = {
                     TextButton(onClick = {
+                        viewModel.dismissCompletion()
                         showInternalPlayer = path
                     }) { Text("Watch Now") }
                 },
@@ -414,9 +420,70 @@ fun PermissionsGate(onRequest: () -> Unit) {
 
 @Composable
 fun LiveOverlayPreview(settings: TimelapseSettings, captureStartMs: Long) {
-    // Simplified preview for the UI
-    Box(Modifier.fillMaxSize().padding(16.dp)) {
-        Text("OVERLAY ACTIVE", color = Color.Yellow, modifier = Modifier.align(Alignment.Center))
+    var overlayText by remember { mutableStateOf("") }
+
+    LaunchedEffect(settings.overlayType, settings.overlayText) {
+        while (true) {
+            overlayText = when (settings.overlayType) {
+                OverlayType.TIMESTAMP ->
+                    SimpleDateFormat("yyyy-MM-dd  HH:mm:ss", Locale.getDefault()).format(Date())
+                OverlayType.STOPWATCH -> {
+                    val elapsed = System.currentTimeMillis() - captureStartMs
+                    val h = elapsed / 3_600_000L
+                    val m = (elapsed % 3_600_000L) / 60_000L
+                    val s = (elapsed % 60_000L) / 1_000L
+                    if (h > 0) "%02d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
+                }
+                OverlayType.STATIC_TEXT -> settings.overlayText.ifBlank { "Timelapse" }
+                OverlayType.NONE -> ""
+            }
+            // Static text never changes; timestamp/stopwatch update every second
+            if (settings.overlayType == OverlayType.STATIC_TEXT ||
+                settings.overlayType == OverlayType.NONE) break
+            delay(1_000L)
+        }
+    }
+
+    if (overlayText.isEmpty()) return
+
+    val alignment = when (settings.overlayPosition) {
+        OverlayPosition.TOP_LEFT     -> Alignment.TopStart
+        OverlayPosition.TOP_CENTER   -> Alignment.TopCenter
+        OverlayPosition.TOP_RIGHT    -> Alignment.TopEnd
+        OverlayPosition.BOTTOM_LEFT  -> Alignment.BottomStart
+        OverlayPosition.BOTTOM_CENTER -> Alignment.BottomCenter
+        OverlayPosition.BOTTOM_RIGHT -> Alignment.BottomEnd
+    }
+
+    val isBottom = settings.overlayPosition.name.startsWith("BOTTOM")
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            // Bottom positions need clearance above the record button area (~160dp)
+            .padding(
+                top    = if (!isBottom) 8.dp  else 0.dp,
+                bottom = if (isBottom)  160.dp else 0.dp,
+                start  = 16.dp,
+                end    = 16.dp
+            )
+    ) {
+        Text(
+            text       = overlayText,
+            modifier   = Modifier.align(alignment),
+            color      = Color.White,
+            fontSize   = settings.overlayTextSizeSp.sp,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Bold,
+            style      = MaterialTheme.typography.bodyMedium.copy(
+                shadow = Shadow(
+                    color      = Color.Black,
+                    offset     = Offset(2f, 2f),
+                    blurRadius = 6f
+                )
+            )
+        )
     }
 }
 

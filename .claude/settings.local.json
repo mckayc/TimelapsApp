@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find 'd:/Backup Files/Git/Timelapse Stamp/TimelapsApp/app/src' -type f \\\\\\(-name *.kt -o -name *.java \\\\\\))",
+      "Bash(./gradlew compileDebugKotlin)"
+    ]
+  }
+}

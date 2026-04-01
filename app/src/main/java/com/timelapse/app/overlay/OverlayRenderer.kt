@@ -14,8 +14,6 @@ import java.util.concurrent.TimeUnit
  */
 class OverlayRenderer {
 
-    private val dateFormat = SimpleDateFormat("yyyy-MM-dd  HH:mm:ss", Locale.getDefault())
-
     fun applyOverlay(
         source: Bitmap,
         settings: TimelapseSettings,
@@ -24,7 +22,7 @@ class OverlayRenderer {
         if (settings.overlayType == OverlayType.NONE) return source
 
         val text = when (settings.overlayType) {
-            OverlayType.TIMESTAMP -> dateFormat.format(Date())
+            OverlayType.TIMESTAMP -> SimpleDateFormat("yyyy-MM-dd  HH:mm:ss", Locale.getDefault()).format(Date())
             OverlayType.STOPWATCH -> formatElapsed(System.currentTimeMillis() - captureStartMs)
             OverlayType.STATIC_TEXT -> settings.overlayText.ifBlank { "Timelapse" }
             OverlayType.NONE -> return source

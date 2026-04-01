@@ -89,6 +89,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         currentScreen = screen
     }
 
+    fun onCameraBindingFailed(message: String) {
+        uiState = uiState.copy(errorMessage = message)
+    }
+
     fun dismissError() {
         uiState = uiState.copy(errorMessage = null)
     }
@@ -177,8 +181,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (tempFile != null && uiState.frameCount > 0) {
                     val saved = saveToGallery(tempFile)
                     withContext(Dispatchers.Main) {
-                        // Return the absolute path so the internal player can find it
-                        uiState = uiState.copy(isEncoding = false, outputPath = tempFile.absolutePath)
+                        uiState = uiState.copy(isEncoding = false, outputPath = saved)
                     }
                 } else {
                     withContext(Dispatchers.Main) {
@@ -277,15 +280,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             val uri = ctx.contentResolver.insert(
                 MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values
-            )!!
-            ctx.contentResolver.openOutputStream(uri)!!.use { out ->
+            ) ?: throw java.io.IOException("MediaStore insert returned null — storage full or permission denied")
+            (ctx.contentResolver.openOutputStream(uri)
+                ?: throw java.io.IOException("Could not open output stream for $uri")).use { out ->
                 tempFile.inputStream().use { it.copyTo(out) }
             }
             values.clear()
             values.put(MediaStore.Video.Media.IS_PENDING, 0)
             ctx.contentResolver.update(uri, values, null, null)
-            tempFile.delete()
-            "Movies/TimelapsApp/$fileName"
+            // Keep tempFile for immediate "Watch Now" playback via Uri.fromFile.
+            // Cache dir is managed by Android and cleaned up when storage is low.
+            tempFile.absolutePath
         } else {
             // API 26-28: write directly to public Movies folder
             @Suppress("DEPRECATION")
@@ -293,3 +298,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 android.os.Environment.DIRECTORY_MOVIES
             )
             val appDir = File(moviesDir, "TimelapsApp").also { it.mkdirs() }
+            val dest = File(appDir, fileName)
+            tempFile.copyTo(dest, overwrite = true)
+            tempFile.delete()
+            dest.absolutePath
+        }
+    }
+}

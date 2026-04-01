@@ -166,9 +166,10 @@ private fun VideoCard(
                     .background(Color.Black),
                 contentAlignment  = Alignment.Center
             ) {
-                if (thumbnail != null) {
+                val bmp = thumbnail
+                if (bmp != null) {
                     Image(
-                        bitmap        = thumbnail!!.asImageBitmap(),
+                        bitmap        = bmp.asImageBitmap(),
                         contentDescription = "Video thumbnail",
                         contentScale  = ContentScale.Crop,
                         modifier      = Modifier.fillMaxSize()
