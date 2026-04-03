@@ -109,6 +109,10 @@ fun CameraScreen(viewModel: MainViewModel) {
             )
             viewModel.setImageCapture(imageCapture)
             viewModel.setCameraControl(camera.cameraControl)
+            
+            camera.cameraInfo.zoomState.observe(lifecycleOwner) { state ->
+                viewModel.updateZoomState(state)
+            }
         } catch (exc: Exception) {
             Log.e("CameraScreen", "Use case binding failed", exc)
             viewModel.onCameraBindingFailed(exc.message ?: "Unknown camera error")
@@ -125,6 +129,20 @@ fun CameraScreen(viewModel: MainViewModel) {
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
                     preview.setSurfaceProvider(this.surfaceProvider)
+                    
+                    // Tap to Focus implementation
+                    setOnTouchListener { view, event ->
+                        if (event.action == android.view.MotionEvent.ACTION_UP) {
+                            val factory = view.display.let { 
+                                SurfaceOrientedMeteringPointFactory(view.width.toFloat(), view.height.toFloat()) 
+                            }
+                            val point = factory.createPoint(event.x, event.y)
+                            val action = FocusMeteringAction.Builder(point).build()
+                            viewModel.tapToFocus(action)
+                            view.performClick()
+                        }
+                        true
+                    }
                 }
             },
             modifier = Modifier.fillMaxSize()
@@ -175,6 +193,17 @@ fun CameraScreen(viewModel: MainViewModel) {
             }
 
             Spacer(modifier = Modifier.weight(1f))
+
+            // Zoom Controls
+            if (!uiState.isCapturing && uiState.zoomState != null) {
+                ZoomControls(
+                    modifier = Modifier.align(Alignment.CenterHorizontally).padding(bottom = 16.dp),
+                    currentZoom = uiState.zoomState.zoomRatio,
+                    minZoom = uiState.zoomState.minZoomRatio,
+                    maxZoom = uiState.zoomState.maxZoomRatio,
+                    onZoomChanged = { viewModel.setZoom(it) }
+                )
+            }
 
             // Capture Status Info
             AnimatedVisibility(
@@ -245,6 +274,28 @@ fun CameraScreen(viewModel: MainViewModel) {
             }
         }
 
+        // Toast-like message for AE/AF Lock
+        Box(modifier = Modifier.fillMaxSize().padding(bottom = 120.dp), contentAlignment = Alignment.BottomCenter) {
+            AnimatedVisibility(
+                visible = uiState.toastMessage != null,
+                enter = fadeIn() + slideInVertically { it / 2 },
+                exit = fadeOut() + slideOutVertically { it / 2 }
+            ) {
+                Surface(
+                    color = Color.Black.copy(alpha = 0.7f),
+                    shape = RoundedCornerShape(24.dp),
+                    modifier = Modifier.padding(horizontal = 32.dp)
+                ) {
+                    Text(
+                        text = uiState.toastMessage ?: "",
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
+        }
+
         // --- 4. Battery Saver / Blackout Layer ---
         if (uiState.batterySaverActive) {
             Box(
@@ -291,6 +342,59 @@ fun CameraScreen(viewModel: MainViewModel) {
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun ZoomControls(
+    modifier: Modifier = Modifier,
+    currentZoom: Float,
+    minZoom: Float,
+    maxZoom: Float,
+    onZoomChanged: (Float) -> Unit
+) {
+    Row(
+        modifier = modifier
+            .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(20.dp))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        val zoomLevels = listOf(1f, 2f, 5f).filter { it in minZoom..maxZoom }
+        
+        zoomLevels.forEach { level ->
+            val isSelected = (currentZoom - level).let { it > -0.1f && it < 0.1f }
+            Surface(
+                onClick = { onZoomChanged(level) },
+                shape = CircleShape,
+                color = if (isSelected) Color.White else Color.Transparent,
+                modifier = Modifier.size(32.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "${level.toInt()}x",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isSelected) Color.Black else Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        // Slider for fine-grained control if range is large
+        if (maxZoom > 1f) {
+            Slider(
+                value = currentZoom,
+                onValueChange = onZoomChanged,
+                valueRange = minZoom..maxZoom.coerceAtMost(10f),
+                modifier = Modifier.width(120.dp),
+                colors = SliderDefaults.colors(
+                    thumbColor = Color.White,
+                    activeTrackColor = Color.White,
+                    inactiveTrackColor = Color.White.copy(alpha = 0.3f)
+                )
+            )
         }
     }
 }

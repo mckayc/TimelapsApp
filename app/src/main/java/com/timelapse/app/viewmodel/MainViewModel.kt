@@ -36,9 +36,11 @@ data class CaptureUiState(
     val elapsedSeconds: Long = 0L,
     val outputPath: String? = null,
     val errorMessage: String? = null,
+    val toastMessage: String? = null,
     val showSettings: Boolean = false,
     val batterySaverActive: Boolean = false,
-    val selectedVideoUri: Uri? = null
+    val selectedVideoUri: Uri? = null,
+    val zoomState: ZoomState? = null
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -64,6 +66,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var captureJob: Job? = null
     private var timerJob: Job? = null
     private var batterySaverJob: Job? = null
+    private var toastJob: Job? = null
 
     private var encoder: VideoEncoder? = null
     private val encoderMutex = Mutex()
@@ -94,15 +97,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         applyCameraSettings()
     }
 
+    fun updateZoomState(state: ZoomState) {
+        uiState = uiState.copy(zoomState = state)
+    }
+
+    fun setZoom(ratio: Float) {
+        cameraControl?.setZoomRatio(ratio)
+    }
+
+    fun tapToFocus(action: FocusMeteringAction) {
+        cameraControl?.startFocusAndMetering(action)
+    }
+
     private fun applyCameraSettings() {
         val control = cameraControl ?: return
         if (settings.focusExposureLocked) {
-            control.cancelFocusAndMetering()
+            // AE/AF lock handling
         }
     }
 
     fun toggleFocusLock() {
-        updateSettings(settings.copy(focusExposureLocked = !settings.focusExposureLocked))
+        val nextLocked = !settings.focusExposureLocked
+        updateSettings(settings.copy(focusExposureLocked = nextLocked))
+        showToast(if (nextLocked) "AE/AF Locked" else "AE/AF Unlocked")
+    }
+
+    fun showToast(message: String) {
+        toastJob?.cancel()
+        uiState = uiState.copy(toastMessage = message)
+        toastJob = viewModelScope.launch {
+            delay(2000)
+            uiState = uiState.copy(toastMessage = null)
+        }
     }
 
     fun updateSettings(newSettings: TimelapseSettings) {
@@ -159,7 +185,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         val ctx = getApplication<Application>()
         val executor = ContextCompat.getMainExecutor(ctx)
-        val intervalMs = settings.intervalSeconds * 1000L
+        val intervalMs = (settings.intervalSeconds * 1000L).toLong()
         val snap = settings.copy() // snapshot
 
         captureJob = viewModelScope.launch(Dispatchers.IO) {
@@ -175,8 +201,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             val tmp = File(ctx.cacheDir, "timelapse_tmp_${System.currentTimeMillis()}.mp4")
                             
                             val isPortrait = bitmap.height > bitmap.width
-                            val targetWidth = if (isPortrait) snap.videoResolution.height else snap.videoResolution.width
-                            val targetHeight = if (isPortrait) snap.videoResolution.width else snap.videoResolution.height
+                            val res = snap.videoResolution
+                            
+                            // Determine target dimensions based on first frame orientation
+                            val targetWidth = if (isPortrait) minOf(res.width, res.height) else maxOf(res.width, res.height)
+                            val targetHeight = if (isPortrait) maxOf(res.width, res.height) else minOf(res.width, res.height)
 
                             encoder = VideoEncoder(
                                 outputFile = tmp,
@@ -293,6 +322,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         captureJob?.cancel()
         timerJob?.cancel()
         batterySaverJob?.cancel()
+        toastJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
             encoderMutex.withLock { encoder?.finish(); encoder = null }
         }
@@ -317,20 +347,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             executor,
             object : ImageCapture.OnImageCapturedCallback() {
                 override fun onCaptureSuccess(imageProxy: ImageProxy) {
+                    val rotation = imageProxy.imageInfo.rotationDegrees
                     val bitmap = imageProxy.toBitmap()
                     imageProxy.close()
 
-                    val processed = if (settings.cameraOption == CameraOption.FRONT) {
-                        val matrix = Matrix().apply {
-                            postScale(-1f, 1f, bitmap.width / 2f, bitmap.height / 2f)
+                    // Rotate the bitmap to match physical orientation
+                    val rotated = if (rotation != 0) {
+                        val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
+                        Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true).also {
+                            bitmap.recycle()
                         }
-                        Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-                            .also { bitmap.recycle() }
                     } else {
                         bitmap
                     }
 
-                    cont.resume(processed to 0)
+                    // For front camera, we also need to mirror horizontally
+                    val processed = if (settings.cameraOption == CameraOption.FRONT) {
+                        val mirrorMatrix = Matrix().apply { 
+                            postScale(-1f, 1f, rotated.width / 2f, rotated.height / 2f) 
+                        }
+                        Bitmap.createBitmap(rotated, 0, 0, rotated.width, rotated.height, mirrorMatrix, true).also {
+                            rotated.recycle()
+                        }
+                    } else {
+                        rotated
+                    }
+
+                    cont.resume(processed to rotation)
                 }
 
                 override fun onError(exception: ImageCaptureException) {

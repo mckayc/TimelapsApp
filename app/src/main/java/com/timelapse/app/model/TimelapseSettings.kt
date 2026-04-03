@@ -3,7 +3,7 @@ package com.timelapse.app.model
 data class TimelapseSettings(
     val cameraOption: CameraOption = CameraOption.BACK,
     val cameraId: String? = null, // Store specific camera ID for multiple lenses
-    val intervalSeconds: Int = 5,
+    val intervalSeconds: Float = 5f,
     val overlayType: OverlayType = OverlayType.NONE,
     val overlayText: String = "Timelapse",
     val overlayTextSizeSp: Float = 28f,
@@ -58,5 +58,5 @@ enum class AutoStopType(val displayName: String) {
     FRAMES("After Frame Count")
 }
 
-val CAPTURE_INTERVALS = listOf(1, 2, 5, 10, 15, 30, 60)
+val CAPTURE_INTERVALS = listOf(0.25f, 0.5f, 1f, 2f, 5f, 10f, 15f, 30f, 60f)
 val BATTERY_SAVER_TIMEOUTS = listOf(5, 10, 30, 60, 120)
